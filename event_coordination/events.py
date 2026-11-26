@@ -1,9 +1,9 @@
 from uuid import uuid4
 
 from .contracts import CompletionReader, Receipt
-from .errors import Conflict
-from .service import Context, Service
-from .storage import bump_event, emit, event_row, record
+from .errors import Conflict, ValidationError
+from .service import Context, Service, require_working
+from .storage import bump_event, bump_task, emit, event_row, record
 from .validation import now, pagination, text, timestamp, version
 
 
@@ -125,3 +125,161 @@ class EventService(Service):
             return Receipt(event_id, result)
 
         return self._mutate(actor_id, request_id, "event.reject", payload, guard, change)
+
+    def advance(
+        self, actor_id: str, request_id: str, event_id: str, *,
+        status: str, expected_version: int,
+    ) -> Receipt:
+        previous = {"preparing": "approved", "ongoing": "preparing"}
+        if status not in previous:
+            raise ValidationError("Use complete/archive/cancel for terminal transitions")
+        payload = {
+            "event_id": text(event_id, "event_id"), "status": status,
+            "expected_version": version(expected_version),
+        }
+
+        def change(ctx, event):
+            if event["status"] != previous[status]:
+                raise Conflict(f"Transition to {status} requires {previous[status]}")
+            result = bump_event(ctx.db, event, expected_version, status=status)
+            record(ctx.db, ctx.actor.user_id, "event.advanced", event_id, {"status": status})
+            emit(ctx.db, "event.advanced", event_id, {"audience": "event_sync", "status": status})
+            return Receipt(event_id, result)
+
+        return self._mutate(
+            actor_id, request_id, "event.advance", payload,
+            lambda ctx: ctx.managed_event(event_id), change,
+        )
+
+    def complete(
+        self, actor_id: str, request_id: str, event_id: str, *,
+        expected_version: int, cancel_remaining_reason: str | None = None,
+    ) -> Receipt:
+        if cancel_remaining_reason is not None:
+            cancel_remaining_reason = text(cancel_remaining_reason, "cancel_remaining_reason", 4000)
+        payload = {
+            "event_id": text(event_id, "event_id"),
+            "expected_version": version(expected_version),
+            "cancel_remaining_reason": cancel_remaining_reason,
+        }
+
+        def change(ctx, event):
+            if event["status"] != "ongoing":
+                raise Conflict("Only an ongoing event can be completed")
+            if self.completion is None:
+                raise Conflict("Report integration is not connected")
+            evidence = self.completion.get(event_id)
+            if not evidence.report_id or not evidence.report_id.strip():
+                raise Conflict("A saved report is required")
+            tasks = self._open_tasks(ctx, event_id)
+            if tasks and cancel_remaining_reason is None:
+                raise Conflict("Resolve outstanding tasks or explicitly cancel them with a reason")
+            result = bump_event(ctx.db, event, expected_version, status="completed")
+            self._cancel_tasks(ctx, event_id, tasks, cancel_remaining_reason)
+            record(ctx.db, ctx.actor.user_id, "event.completed", event_id, {"report_id": evidence.report_id})
+            emit(ctx.db, "event.completed", event_id, {
+                "audience": "report_delivery", "report_id": evidence.report_id,
+            })
+            return Receipt(event_id, result)
+
+        return self._mutate(
+            actor_id, request_id, "event.complete", payload,
+            lambda ctx: ctx.managed_event(event_id), change,
+        )
+
+    def archive(
+        self, actor_id: str, request_id: str, event_id: str, *, expected_version: int,
+    ) -> Receipt:
+        payload = {"event_id": text(event_id, "event_id"), "expected_version": version(expected_version)}
+
+        def change(ctx, event):
+            if event["status"] != "completed":
+                raise Conflict("Only a completed event can be archived")
+            if self.completion is None:
+                raise Conflict("Report/chat integration is not connected")
+            evidence = self.completion.get(event_id)
+            if not (
+                evidence.report_id and evidence.report_id.strip()
+                and evidence.report_delivered and evidence.chat_archived
+            ):
+                raise Conflict("Confirmed report delivery and chat archive are required")
+            result = bump_event(ctx.db, event, expected_version, status="archived")
+            record(ctx.db, ctx.actor.user_id, "event.archived", event_id, {})
+            emit(ctx.db, "event.archived", event_id, {"audience": "event_sync"})
+            return Receipt(event_id, result)
+
+        return self._mutate(
+            actor_id, request_id, "event.archive", payload,
+            lambda ctx: ctx.managed_event(event_id), change,
+        )
+
+    def cancel(
+        self, actor_id: str, request_id: str, event_id: str, *,
+        reason: str, expected_version: int,
+    ) -> Receipt:
+        payload = {
+            "event_id": text(event_id, "event_id"), "reason": text(reason, "reason", 4000),
+            "expected_version": version(expected_version),
+        }
+
+        def change(ctx, event):
+            if event["status"] not in {"submitted", "approved", "preparing", "ongoing"}:
+                raise Conflict("Event is already closed")
+            result = bump_event(
+                ctx.db, event, expected_version, status="cancelled", reason=payload["reason"]
+            )
+            self._cancel_tasks(ctx, event_id, self._open_tasks(ctx, event_id), payload["reason"])
+            record(ctx.db, ctx.actor.user_id, "event.cancelled", event_id, {"reason": payload["reason"]})
+            emit(ctx.db, "event.cancelled", event_id, {
+                "audience": "event_shutdown", "reason": payload["reason"],
+            })
+            return Receipt(event_id, result)
+
+        return self._mutate(
+            actor_id, request_id, "event.cancel", payload,
+            lambda ctx: ctx.managed_event(event_id), change,
+        )
+
+    def escalate_problem(
+        self, actor_id: str, request_id: str, event_id: str, *,
+        description: str, expected_version: int,
+    ) -> Receipt:
+        payload = {
+            "event_id": text(event_id, "event_id"),
+            "description": text(description, "description", 4000),
+            "expected_version": version(expected_version),
+        }
+
+        def change(ctx, event):
+            require_working(event)
+            result = bump_event(ctx.db, event, expected_version)
+            record(ctx.db, ctx.actor.user_id, "event.problem_reported", event_id, {
+                "description": payload["description"],
+            })
+            emit(ctx.db, "event.problem_reported", event_id, {
+                "audience": "coordination", "description": payload["description"],
+            })
+            return Receipt(event_id, result)
+
+        return self._mutate(
+            actor_id, request_id, "event.escalate_problem", payload,
+            lambda ctx: ctx.managed_event(event_id), change,
+        )
+
+    @staticmethod
+    def _open_tasks(ctx, event_id):
+        return [dict(row) for row in ctx.db.execute(
+            "SELECT * FROM tasks WHERE event_id=? AND status IN ('assigned','in_progress','needs_help')",
+            (event_id,),
+        )]
+
+    @staticmethod
+    def _cancel_tasks(ctx, event_id, tasks, reason):
+        for task in tasks:
+            bump_task(ctx.db, task, task["version"], status="cancelled", note=reason)
+            record(ctx.db, ctx.actor.user_id, "task.cancelled", event_id, {
+                "task_id": task["id"], "reason": reason,
+            })
+            emit(ctx.db, "task.changed", event_id, {
+                "audience": "task_sync", "task_id": task["id"], "status": "cancelled",
+            })
