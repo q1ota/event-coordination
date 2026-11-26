@@ -48,3 +48,19 @@ class DomainCase(unittest.TestCase):
         self.store = Store(self.path)
         self.directory = Directory()
         self.reports = Reports()
+
+    def propose(self, request_id="proposal"):
+        from event_coordination.events import EventService
+        return EventService(self.store, self.directory).propose(
+            "author", request_id, title="Local festival", place="Community hall",
+            starts_at="2030-06-01T12:00:00+03:00", territory_id="north",
+            direction_id="culture", purpose="Community event", needed_help="Transport",
+        )
+
+    def approve(self):
+        from event_coordination.events import EventService
+        proposal = self.propose()
+        return EventService(self.store, self.directory).approve(
+            "coordinator", "approve", proposal.resource_id,
+            owner_id="owner", expected_version=proposal.version,
+        )
