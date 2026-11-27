@@ -1,4 +1,3 @@
-
 import unittest
 
 from pathlib import Path
@@ -493,6 +492,56 @@ class IdentityIntegrationTests(unittest.TestCase):
         )
 
         self.assertIn(identity, candidates)
+
+
+    def test_u1_event_workflow_with_u2_identity(self):
+        from event_coordination.events import EventService
+        from event_coordination.storage import Store
+        from event_coordination.errors import Forbidden
+
+        store = Store(self.path.parent / "events.sqlite")
+        events = EventService(store, self.directory)
+
+        proposal = events.propose(
+            self.user,
+            "test-proposal",
+            title="Test event",
+            place="Kazan",
+            starts_at="2030-06-01T12:00:00+03:00",
+            territory_id="kazan",
+            direction_id="culture",
+            purpose="Test integration",
+            needed_help="Organization",
+        )
+
+        event_id = proposal.resource_id
+
+        self.assertEqual(
+            "submitted",
+            events.get(self.user, event_id)["status"],
+        )
+
+        events.approve(
+            self.coordinator,
+            "test-approval",
+            event_id,
+            owner_id=self.user,
+            expected_version=1,
+        )
+
+        self.assertEqual(
+            "approved",
+            events.get(self.user, event_id)["status"],
+        )
+
+        self.admission.revoke_access(
+            self.coordinator,
+            self.user,
+            reason="Test access revocation",
+        )
+
+        with self.assertRaises(Forbidden):
+            events.get(self.user, event_id)
 
 
 if __name__ == "__main__":
