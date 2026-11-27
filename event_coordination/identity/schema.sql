@@ -125,3 +125,9 @@ CREATE TABLE IF NOT EXISTS external_identities (
     PRIMARY KEY (provider, external_id),
     UNIQUE (provider, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS identity_bootstrap (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    initialized_at TEXT NOT NULL,
+    operator_ref TEXT NOT NULL
+);
