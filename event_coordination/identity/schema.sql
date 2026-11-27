@@ -174,3 +174,11 @@ CREATE TABLE IF NOT EXISTS parental_invitations (
     CHECK ((parent_sender IS NULL AND relationship IS NULL AND submitted_at IS NULL)
         OR (parent_sender IS NOT NULL AND relationship IS NOT NULL AND submitted_at IS NOT NULL))
 );
+
+
+CREATE TABLE IF NOT EXISTS privacy_erasure (
+    user_id TEXT PRIMARY KEY REFERENCES users(id),
+    erased_at TEXT NOT NULL,
+    operator_ref TEXT NOT NULL,
+    reason TEXT NOT NULL CHECK (reason IN ('approved_request','expired_draft'))
+);
