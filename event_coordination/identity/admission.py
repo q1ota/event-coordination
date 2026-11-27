@@ -8,6 +8,7 @@ from .registration import now
 from .repository import IdentityRepository
 from .policy import effective_age
 from .consent import require_current_versions
+from .parental import published_parental_version, require_parental_version, validate_evidence, parental_access_valid
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,7 @@ class AdmissionService:
             raise ValueError("Invalid Telegram ID")
 
         with self.repository.transaction(write=True) as db:
+            require_parental_version(db, policy.parental_version)
             user = db.execute(
                 """
                 SELECT * FROM users
@@ -156,7 +158,9 @@ class AdmissionService:
             if user is None:
                 raise ValueError("User not found")
 
-            if user["status"] != RegistrationStatus.PENDING:
+            if user["status"] != RegistrationStatus.PENDING and not (
+                user["status"] == RegistrationStatus.ACTIVE and published_parental_version(db) is not None
+            ):
                 raise AuthorizationError(
                     "Registration must be pending"
                 )
@@ -183,11 +187,11 @@ class AdmissionService:
 
             if existing is not None:
                 if existing["version"] != policy.parental_version:
-                    raise AuthorizationError(
-                        "Outdated parental consent must be revoked"
-                    )
-
-                return existing["id"]
+                    if published_parental_version(db) is None:
+                        raise AuthorizationError("Outdated parental consent must be revoked")
+                    db.execute("UPDATE parental_consents SET status='revoked' WHERE id=?", (existing["id"],))
+                else:
+                    return existing["id"]
 
             consent_id = str(uuid4())
 
@@ -220,6 +224,8 @@ class AdmissionService:
         *,
         approved: bool,
         reason: str,
+        verification_method: str | None = None,
+        verification_ref: str | None = None,
     ) -> None:
         policy = self._require_policy()
         self._validate_reason(reason)
@@ -228,6 +234,7 @@ class AdmissionService:
             raise ValueError("Invalid decision")
 
         with self.repository.transaction(write=True) as db:
+            require_parental_version(db, policy.parental_version)
             consent = db.execute(
                 """
                 SELECT * FROM parental_consents
@@ -247,7 +254,9 @@ class AdmissionService:
 
             user = self._get_user(db, target_id)
 
-            if user["status"] != RegistrationStatus.PENDING:
+            if user["status"] != RegistrationStatus.PENDING and not (
+                user["status"] == RegistrationStatus.ACTIVE and published_parental_version(db) is not None
+            ):
                 raise AuthorizationError(
                     "Registration must be pending"
                 )
@@ -262,6 +271,16 @@ class AdmissionService:
                     "Parental consent version is outdated"
                 )
 
+            if approved and (published_parental_version(db) is not None or verification_method is not None or verification_ref is not None):
+                method, reference = validate_evidence(verification_method, verification_ref)
+                form = db.execute("SELECT parent_sender,submitted_at FROM parental_invitations WHERE consent_id=?", (consent_id,)).fetchone()
+                if form is None or form["submitted_at"] is None:
+                    raise AuthorizationError("Electronic parental form is required")
+                reviewer = self._get_user(db, actor_id)
+                if reviewer["telegram_user_id"] == form["parent_sender"]:
+                    raise AuthorizationError("Parent cannot review own form")
+                db.execute("""INSERT INTO parental_verifications(consent_id,method,reference,verified_by,verified_at)
+                    VALUES(?,?,?,?,?)""", (consent_id, method, reference, actor_id, now()))
             status = "verified" if approved else "rejected"
 
             db.execute(
@@ -303,6 +322,7 @@ class AdmissionService:
         self._validate_reason(reason)
 
         with self.repository.transaction(write=True) as db:
+            require_parental_version(db, policy.parental_version)
             self._require_reviewer(
                 db, actor_id, target_id
             )
@@ -364,6 +384,9 @@ class AdmissionService:
                     raise AuthorizationError(
                         "Verified parental consent is required"
                     )
+
+            if not parental_access_valid(db, user, self.repository.age_policy):
+                raise AuthorizationError("Current verified parental consent required")
 
             db.execute(
                 """

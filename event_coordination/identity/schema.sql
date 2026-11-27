@@ -148,3 +148,29 @@ CREATE TABLE IF NOT EXISTS consent_history (
     action TEXT NOT NULL CHECK (action IN ('accepted', 'revoked')),
     occurred_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS identity_parental_policy (
+    singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+    version TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    operator_ref TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS parental_verifications (
+    consent_id TEXT PRIMARY KEY REFERENCES parental_consents(id),
+    method TEXT NOT NULL CHECK (method IN ('electronic_form')),
+    reference TEXT NOT NULL,
+    verified_by TEXT NOT NULL REFERENCES users(id),
+    verified_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS parental_invitations (
+    consent_id TEXT PRIMARY KEY REFERENCES parental_consents(id),
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    parent_sender INTEGER,
+    relationship TEXT CHECK (relationship IN ('mother','father','legal_guardian')),
+    submitted_at TEXT,
+    CHECK ((parent_sender IS NULL AND relationship IS NULL AND submitted_at IS NULL)
+        OR (parent_sender IS NOT NULL AND relationship IS NOT NULL AND submitted_at IS NOT NULL))
+);

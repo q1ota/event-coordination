@@ -12,6 +12,7 @@ from .registration import RegistrationService
 from .repository import IdentityRepository
 from .scopes import ScopePolicy
 from .consent import ConsentService
+from .parental import ParentalPolicyService, ElectronicParentalConsent
 
 
 class IdentityGateway:
@@ -30,6 +31,8 @@ class IdentityGateway:
             review_enabled=review_enabled)
         self._consent = ConsentService(repository, policy=policy)
         self._consent.ensure_policy()
+        ParentalPolicyService(repository, policy=policy).ensure_policy()
+        self._parental = ElectronicParentalConsent(repository, policy=policy, admission=self._admission)
 
     @staticmethod
     def _validate_sender(sender_id: int) -> None:
@@ -85,15 +88,32 @@ class IdentityGateway:
         self._validate_sender(sender_id)
         return self._admission.submit_parental_consent(sender_id)
 
+    def issue_parental_invitation(self, sender_id: int, /):
+        return self._parental.issue(sender_id)
+
+    def open_parental_form(self, sender_id: int, /, *, token: str):
+        return self._parental.form(sender_id, token)
+
+    def submit_parental_form(self, sender_id: int, /, *, token: str, version: str,
+                             relationship: str, confirms_guardianship: bool,
+                             accepts_participation: bool, accepts_data_terms: bool):
+        return self._parental.submit(sender_id, token, version=version, relationship=relationship,
+            confirms_guardianship=confirms_guardianship, accepts_participation=accepts_participation,
+            accepts_data_terms=accepts_data_terms)
+
+    def get_parental_review_details(self, sender_id: int, /, *, consent_id: str):
+        return self._parental.review_details(self.resolve_actor(sender_id), consent_id)
+
     def approve_registration(self, sender_id: int, /, *, target_id: str, reason: str):
         return self._admission.approve_registration(self.resolve_actor(sender_id), target_id, reason=reason)
 
     def reject_registration(self, sender_id: int, /, *, target_id: str, reason: str):
         return self._admission.reject_registration(self.resolve_actor(sender_id), target_id, reason=reason)
 
-    def review_parental_consent(self, sender_id: int, /, *, consent_id: str, approved: bool, reason: str):
+    def review_parental_consent(self, sender_id: int, /, *, consent_id: str, approved: bool, reason: str,
+                                verification_method: str | None = None, verification_ref: str | None = None):
         return self._admission.review_parental_consent(self.resolve_actor(sender_id), consent_id,
-            approved=approved, reason=reason)
+            approved=approved, reason=reason, verification_method=verification_method, verification_ref=verification_ref)
 
     def revoke_parental_consent(self, sender_id: int, /, *, consent_id: str, reason: str):
         return self._admission.revoke_parental_consent(self.resolve_actor(sender_id), consent_id, reason=reason)

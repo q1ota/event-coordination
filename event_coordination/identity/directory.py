@@ -5,6 +5,7 @@ from .models import RegistrationStatus, Role
 from .repository import IdentityRepository
 from .policy import effective_age
 from .consent import current_consents_valid
+from .parental import parental_access_valid
 
 
 class SQLiteIdentityDirectory(IdentityDirectory):
@@ -26,7 +27,7 @@ class SQLiteIdentityDirectory(IdentityDirectory):
         if policy is not None:
             active = active and policy.allows_admission(age)
 
-        active = active and current_consents_valid(db, user_id)
+        active = active and current_consents_valid(db, user_id) and parental_access_valid(db, row, self.repository.age_policy)
 
         coordinator = db.execute(
             """
