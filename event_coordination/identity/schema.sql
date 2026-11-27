@@ -50,3 +50,44 @@ CREATE TABLE IF NOT EXISTS consents (
     revoked_at TEXT,
     UNIQUE (user_id, consent_type, version)
 );
+
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    role TEXT NOT NULL CHECK (
+        role IN (
+            'participant',
+            'event_responsible',
+            'territory_coordinator',
+            'council_representative',
+            'general_coordinator',
+            'tech_admin'
+        )
+    ),
+    scope_id TEXT NOT NULL DEFAULT '',
+    granted_by TEXT NOT NULL REFERENCES users(id),
+    granted_at TEXT NOT NULL,
+    revoked_by TEXT REFERENCES users(id),
+    revoked_at TEXT,
+    CHECK (
+        (revoked_by IS NULL AND revoked_at IS NULL)
+        OR
+        (revoked_by IS NOT NULL AND revoked_at IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS unique_active_role
+ON user_roles (user_id, role, scope_id)
+WHERE revoked_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS authorization_audit (
+    id TEXT PRIMARY KEY,
+    actor_id TEXT NOT NULL REFERENCES users(id),
+    target_id TEXT NOT NULL REFERENCES users(id),
+    action TEXT NOT NULL,
+    role TEXT,
+    scope_id TEXT,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);

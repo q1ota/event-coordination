@@ -36,3 +36,25 @@ class UserProfile:
     status: RegistrationStatus
     created_at: str
     updated_at: str
+
+
+
+class Role(StrEnum):
+    PARTICIPANT = "participant"
+    EVENT_RESPONSIBLE = "event_responsible"
+    TERRITORY_COORDINATOR = "territory_coordinator"
+    COUNCIL_REPRESENTATIVE = "council_representative"
+    GENERAL_COORDINATOR = "general_coordinator"
+    TECH_ADMIN = "tech_admin"
+
+
+@dataclass(frozen=True)
+class RoleAssignment:
+    id: str
+    user_id: str
+    role: Role
+    scope_id: str
+    granted_by: str
+    granted_at: str
+    revoked_by: str | None
+    revoked_at: str | None
