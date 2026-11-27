@@ -91,3 +91,26 @@ CREATE TABLE IF NOT EXISTS authorization_audit (
     reason TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+
+CREATE TABLE IF NOT EXISTS parental_consents (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN (
+            'pending',
+            'verified',
+            'rejected',
+            'revoked'
+        )
+    ),
+    submitted_at TEXT NOT NULL,
+    decided_by TEXT REFERENCES users(id),
+    decided_at TEXT,
+    reason TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS unique_live_parental_consent
+ON parental_consents (user_id)
+WHERE status IN ('pending', 'verified');
