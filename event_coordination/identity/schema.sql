@@ -114,3 +114,13 @@ CREATE TABLE IF NOT EXISTS parental_consents (
 CREATE UNIQUE INDEX IF NOT EXISTS unique_live_parental_consent
 ON parental_consents (user_id)
 WHERE status IN ('pending', 'verified');
+
+
+CREATE TABLE IF NOT EXISTS external_identities (
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    linked_at TEXT NOT NULL,
+    PRIMARY KEY (provider, external_id),
+    UNIQUE (provider, user_id)
+);
