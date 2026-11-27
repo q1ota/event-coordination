@@ -6,6 +6,7 @@ from .authorization import AuthorizationError, AuthorizationService
 from .models import RegistrationStatus, Role
 from .registration import now
 from .repository import IdentityRepository
+from .policy import effective_age
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,10 @@ class AdmissionService:
         self.repository = repository
         self.policy = policy
         self.review_enabled = review_enabled
+        age_policy = repository.age_policy
+        if (policy is not None and age_policy is not None
+                and policy.adult_age != age_policy.parental_consent_age):
+            raise ValueError("Admission and age policy thresholds do not match")
 
         self.authorization = AuthorizationService(
             repository
@@ -154,10 +159,12 @@ class AdmissionService:
                     "Registration must be pending"
                 )
 
-            if (
-                user["age"] is None
-                or user["age"] >= policy.adult_age
-            ):
+            age = effective_age(user)
+            age_policy = self.repository.age_policy
+            if age_policy is not None and not age_policy.allows_registration(age):
+                raise AuthorizationError("Minimum registration age is not met")
+
+            if age is None or age >= policy.adult_age:
                 raise ValueError(
                     "Parental consent is not required"
                 )
@@ -308,7 +315,7 @@ class AdmissionService:
             if (
                 not user["display_name"]
                 or not user["territory_id"]
-                or user["age"] is None
+                or effective_age(user) is None
             ):
                 raise AuthorizationError(
                     "Registration is incomplete"
@@ -332,7 +339,12 @@ class AdmissionService:
                 db, target_id, policy
             )
 
-            if user["age"] < policy.adult_age:
+            age = effective_age(user)
+            age_policy = self.repository.age_policy
+            if age_policy is not None and not age_policy.allows_admission(age):
+                raise AuthorizationError("Age policy does not allow admission")
+
+            if age < policy.adult_age:
                 consent = db.execute(
                     """
                     SELECT id FROM parental_consents

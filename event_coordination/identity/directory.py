@@ -3,6 +3,7 @@ from event_coordination.contracts import Identity, IdentityDirectory
 
 from .models import RegistrationStatus, Role
 from .repository import IdentityRepository
+from .policy import effective_age
 
 
 class SQLiteIdentityDirectory(IdentityDirectory):
@@ -12,13 +13,17 @@ class SQLiteIdentityDirectory(IdentityDirectory):
     ):
         self.repository = repository
 
-    @staticmethod
-    def _build_identity(db, row) -> Identity:
+    def _build_identity(self, db, row) -> Identity:
         user_id = row["id"]
 
         active = (
             row["status"] == RegistrationStatus.ACTIVE
         )
+
+        policy = self.repository.age_policy
+        age = effective_age(row)
+        if policy is not None:
+            active = active and policy.allows_admission(age)
 
         coordinator = db.execute(
             """
@@ -60,6 +65,7 @@ class SQLiteIdentityDirectory(IdentityDirectory):
             active=active,
             can_coordinate=(
                 active and coordinator is not None
+                and (policy is None or policy.allows_role(age, Role.GENERAL_COORDINATOR))
             ),
             territory_id=row["territory_id"] or "",
             interests=tuple(
@@ -111,6 +117,9 @@ class SQLiteIdentityDirectory(IdentityDirectory):
                 identity = self._build_identity(
                     db, row
                 )
+
+                if not identity.active:
+                    continue
 
                 if (
                     interest is not None

@@ -5,6 +5,7 @@ from .models import Role, RegistrationStatus, RoleAssignment
 from .registration import now
 from .repository import IdentityRepository
 from .scopes import ScopePolicy
+from .policy import effective_age
 
 
 class AuthorizationError(PermissionError):
@@ -27,10 +28,9 @@ class AuthorizationService:
             else ScopePolicy()
         )
 
-    @staticmethod
-    def _require_active(db, user_id: str) -> None:
+    def _require_active(self, db, user_id: str) -> None:
         row = db.execute(
-            "SELECT status FROM users WHERE id = ?",
+            "SELECT * FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
 
@@ -40,8 +40,20 @@ class AuthorizationService:
         if row["status"] != RegistrationStatus.ACTIVE:
             raise AuthorizationError("User access is inactive")
 
-    @staticmethod
-    def _has_role(db, user_id, role, scope_id="") -> bool:
+        policy = self.repository.age_policy
+        if policy is not None and not policy.allows_admission(effective_age(row)):
+            raise AuthorizationError("Age policy does not allow access")
+
+    def _role_allowed(self, db, user_id, role) -> bool:
+        policy = self.repository.age_policy
+        if policy is None:
+            return True
+        row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return row is not None and policy.allows_role(effective_age(row), Role(role))
+
+    def _has_role(self, db, user_id, role, scope_id="") -> bool:
+        if not self._role_allowed(db, user_id, role):
+            return False
         row = db.execute(
             """
             SELECT id FROM user_roles
@@ -134,6 +146,8 @@ class AuthorizationService:
         with self.repository.transaction(write=True) as db:
             self._require_coordinator(db, actor_id)
             self._require_active(db, target_id)
+            if not self._role_allowed(db, target_id, role):
+                raise AuthorizationError("Age policy does not allow this role")
 
             if role not in self.grantable_roles:
                 raise AuthorizationError(
@@ -294,6 +308,7 @@ class AuthorizationService:
                     revoked_at=row["revoked_at"],
                 )
                 for row in rows
+                if self._role_allowed(db, target_id, row["role"])
             )
 
     def _can_manage(

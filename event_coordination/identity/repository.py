@@ -4,9 +4,12 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+from .policy import AgePolicy
+
 
 class IdentityRepository:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, age_policy: AgePolicy | None = None):
+        self.age_policy = age_policy
         if str(path) == ":memory:":
             raise ValueError("Use a file database")
 
@@ -55,3 +58,7 @@ class IdentityRepository:
 
             if statement.strip():
                 raise ValueError("Incomplete SQL schema")
+
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+            if "birth_date" not in columns:
+                db.execute("ALTER TABLE users ADD COLUMN birth_date TEXT")

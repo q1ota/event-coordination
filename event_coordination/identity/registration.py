@@ -1,9 +1,10 @@
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 from .models import RegistrationStatus, UserProfile
 from .repository import IdentityRepository
+from .policy import age_on, effective_age
 
 
 def now() -> str:
@@ -91,7 +92,8 @@ class RegistrationService:
         *,
         display_name: str,
         territory_id: str,
-        age: int,
+        age: int | None = None,
+        birth_date: date | None = None,
         interests: tuple[str, ...],
         help_types: tuple[str, ...],
     ) -> UserProfile:
@@ -99,8 +101,18 @@ class RegistrationService:
         if not isinstance(display_name, str) or not display_name.strip():
             raise ValueError("Name is required")
 
+        if birth_date is not None:
+            calculated = age_on(birth_date)
+            if age is not None and (type(age) is not int or age != calculated):
+                raise ValueError("Age does not match birth date")
+            age = calculated
+
         if type(age) is not int or not 0 <= age <= 120:
             raise ValueError("Invalid age")
+
+        policy = self.repository.age_policy
+        if policy is not None and not policy.allows_registration(age):
+            raise ValueError("Minimum registration age is not met")
 
         interests = self._normalize_values(interests)
         help_types = self._normalize_values(help_types)
@@ -137,6 +149,7 @@ class RegistrationService:
                 SET display_name = ?,
                     territory_id = ?,
                     age = ?,
+                    birth_date = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
@@ -144,6 +157,7 @@ class RegistrationService:
                     display_name.strip(),
                     territory_id,
                     age,
+                    birth_date.isoformat() if birth_date is not None else None,
                     now(),
                     user_id,
                 ),
@@ -241,6 +255,10 @@ class RegistrationService:
             ):
                 raise ValueError("Registration is incomplete")
 
+            policy = self.repository.age_policy
+            if policy is not None and not policy.allows_registration(profile.age):
+                raise ValueError("Minimum registration age is not met")
+
             for consent_type, version in (
                 ("rules", rules_version),
                 ("personal_data", personal_data_version),
@@ -331,7 +349,8 @@ class RegistrationService:
             telegram_user_id=row["telegram_user_id"],
             display_name=row["display_name"],
             territory_id=row["territory_id"],
-            age=row["age"],
+            age=effective_age(row),
+            birth_date=row["birth_date"],
             interests=tuple(
                 item["direction_id"] for item in interests
             ),

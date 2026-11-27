@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT,
     territory_id TEXT REFERENCES territories(id),
     age INTEGER CHECK (age >= 0),
+    birth_date TEXT,
     status TEXT NOT NULL DEFAULT 'draft'
         CHECK (status IN (
             'draft',

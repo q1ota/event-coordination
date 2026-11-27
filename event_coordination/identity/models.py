@@ -36,6 +36,7 @@ class UserProfile:
     status: RegistrationStatus
     created_at: str
     updated_at: str
+    birth_date: str | None = None
 
 
 
