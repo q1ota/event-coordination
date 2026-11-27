@@ -7,6 +7,7 @@ from .models import RegistrationStatus, Role
 from .registration import now
 from .repository import IdentityRepository
 from .policy import effective_age
+from .consent import require_current_versions
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,7 @@ class AdmissionService:
         user_id: str,
         policy: AdmissionPolicy,
     ) -> None:
+        require_current_versions(db, policy.rules_version, policy.personal_data_version)
         required = (
             ("rules", policy.rules_version),
             (

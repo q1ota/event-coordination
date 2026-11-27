@@ -11,6 +11,7 @@ from .models import Role
 from .registration import RegistrationService
 from .repository import IdentityRepository
 from .scopes import ScopePolicy
+from .consent import ConsentService
 
 
 class IdentityGateway:
@@ -27,6 +28,8 @@ class IdentityGateway:
             grantable_roles=grantable_roles, scope_policy=scope_policy)
         self._admission = AdmissionService(repository, policy=policy,
             review_enabled=review_enabled)
+        self._consent = ConsentService(repository, policy=policy)
+        self._consent.ensure_policy()
 
     @staticmethod
     def _validate_sender(sender_id: int) -> None:
@@ -68,7 +71,10 @@ class IdentityGateway:
                     "personal_data": self._policy.personal_data_version}
         if consent_type not in versions or version != versions[consent_type]:
             raise ValueError("Unknown or outdated consent version")
-        self._registration.accept_consent(self._own_id(sender_id), consent_type, version)
+        self._consent.accept(self._own_id(sender_id), consent_type, version)
+
+    def withdraw_my_consent(self, sender_id: int, /, *, consent_type: str) -> bool:
+        return self._consent.withdraw(self._own_id(sender_id), consent_type)
 
     def submit_my_registration(self, sender_id: int, /):
         return self._registration.submit_registration(self._own_id(sender_id),

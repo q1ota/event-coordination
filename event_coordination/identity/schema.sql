@@ -131,3 +131,20 @@ CREATE TABLE IF NOT EXISTS identity_bootstrap (
     initialized_at TEXT NOT NULL,
     operator_ref TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS identity_consent_policy (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    rules_version TEXT NOT NULL,
+    personal_data_version TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    operator_ref TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS consent_history (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    consent_type TEXT NOT NULL CHECK (consent_type IN ('rules', 'personal_data')),
+    version TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('accepted', 'revoked')),
+    occurred_at TEXT NOT NULL
+);

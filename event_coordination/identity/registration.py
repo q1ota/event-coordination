@@ -207,27 +207,8 @@ class RegistrationService:
         with self.repository.transaction(write=True) as db:
             self._require_editable(db, user_id)
 
-            db.execute(
-                """
-                INSERT INTO consents (
-                    id,
-                    user_id,
-                    consent_type,
-                    version,
-                    accepted_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, consent_type, version)
-                DO NOTHING
-                """,
-                (
-                    str(uuid4()),
-                    user_id,
-                    consent_type,
-                    version.strip(),
-                    now(),
-                ),
-            )
+            from .consent import accept_in_transaction
+            accept_in_transaction(db, user_id, consent_type, version)
 
     def submit_registration(
         self,
@@ -259,6 +240,8 @@ class RegistrationService:
             if policy is not None and not policy.allows_registration(profile.age):
                 raise ValueError("Minimum registration age is not met")
 
+            from .consent import require_current_versions
+            require_current_versions(db, rules_version, personal_data_version)
             for consent_type, version in (
                 ("rules", rules_version),
                 ("personal_data", personal_data_version),

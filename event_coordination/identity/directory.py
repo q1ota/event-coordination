@@ -4,6 +4,7 @@ from event_coordination.contracts import Identity, IdentityDirectory
 from .models import RegistrationStatus, Role
 from .repository import IdentityRepository
 from .policy import effective_age
+from .consent import current_consents_valid
 
 
 class SQLiteIdentityDirectory(IdentityDirectory):
@@ -24,6 +25,8 @@ class SQLiteIdentityDirectory(IdentityDirectory):
         age = effective_age(row)
         if policy is not None:
             active = active and policy.allows_admission(age)
+
+        active = active and current_consents_valid(db, user_id)
 
         coordinator = db.execute(
             """

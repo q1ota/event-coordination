@@ -6,6 +6,7 @@ from .registration import now
 from .repository import IdentityRepository
 from .scopes import ScopePolicy
 from .policy import effective_age
+from .consent import current_consents_valid
 
 
 class AuthorizationError(PermissionError):
@@ -39,6 +40,9 @@ class AuthorizationService:
 
         if row["status"] != RegistrationStatus.ACTIVE:
             raise AuthorizationError("User access is inactive")
+
+        if not current_consents_valid(db, user_id):
+            raise AuthorizationError("Current mandatory consent is missing")
 
         policy = self.repository.age_policy
         if policy is not None and not policy.allows_admission(effective_age(row)):
