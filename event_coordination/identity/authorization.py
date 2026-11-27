@@ -4,6 +4,7 @@ from uuid import uuid4
 from .models import Role, RegistrationStatus, RoleAssignment
 from .registration import now
 from .repository import IdentityRepository
+from .scopes import ScopePolicy
 
 
 class AuthorizationError(PermissionError):
@@ -16,9 +17,15 @@ class AuthorizationService:
         repository: IdentityRepository,
         *,
         grantable_roles: frozenset[Role] = frozenset(),
+        scope_policy: ScopePolicy | None = None,
     ):
         self.repository = repository
         self.grantable_roles = grantable_roles
+        self.scope_policy = (
+            scope_policy
+            if scope_policy is not None
+            else ScopePolicy()
+        )
 
     @staticmethod
     def _require_active(db, user_id: str) -> None:
@@ -96,21 +103,11 @@ class AuthorizationService:
             )
 
     @staticmethod
-    def _validate_scope(role: Role, scope_id: str) -> None:
-        scoped_roles = {
-            Role.EVENT_RESPONSIBLE,
-            Role.TERRITORY_COORDINATOR,
-            Role.COUNCIL_REPRESENTATIVE,
-        }
-
-        if not isinstance(scope_id, str):
-            raise ValueError("Invalid scope")
-
-        if role in scoped_roles and not scope_id.strip():
-            raise ValueError("Scope is required")
-
-        if role not in scoped_roles and scope_id:
-            raise ValueError("Global role cannot have a scope")
+    def _validate_scope(
+        role: Role,
+        scope_id: str,
+    ) -> None:
+        ScopePolicy.validate(role, scope_id)
 
     def grant_role(
         self,
@@ -125,7 +122,9 @@ class AuthorizationService:
         role = Role(role)
 
         if actor_id == target_id:
-            raise AuthorizationError("Self-assignment is forbidden")
+            raise AuthorizationError(
+                "Self-assignment is forbidden"
+            )
 
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("Reason is required")
@@ -141,14 +140,11 @@ class AuthorizationService:
                     "Role assignment policy is not enabled"
                 )
 
-            if role in {
-                Role.EVENT_RESPONSIBLE,
-                Role.TERRITORY_COORDINATOR,
-                Role.COUNCIL_REPRESENTATIVE,
-            }:
-                raise AuthorizationError(
-                    "Scoped assignment requires T08"
-                )
+            self.scope_policy.require_existing_scope(
+                db,
+                role,
+                scope_id,
+            )
 
             existing = db.execute(
                 """
@@ -299,6 +295,69 @@ class AuthorizationService:
                 )
                 for row in rows
             )
+
+    def _can_manage(
+        self,
+        user_id: str,
+        role: Role,
+        scope_id: str,
+    ) -> bool:
+
+        with self.repository.transaction() as db:
+            try:
+                self._require_active(db, user_id)
+
+                self.scope_policy.require_existing_scope(
+                    db,
+                    role,
+                    scope_id,
+                )
+
+            except (PermissionError, ValueError):
+                return False
+
+            return self._has_role(
+                db,
+                user_id,
+                role,
+                scope_id,
+            )
+
+    def can_manage_territory(
+        self,
+        user_id: str,
+        territory_id: str,
+    ) -> bool:
+
+        return self._can_manage(
+            user_id,
+            Role.TERRITORY_COORDINATOR,
+            territory_id,
+        )
+
+    def can_manage_direction(
+        self,
+        user_id: str,
+        direction_id: str,
+    ) -> bool:
+
+        return self._can_manage(
+            user_id,
+            Role.COUNCIL_REPRESENTATIVE,
+            direction_id,
+        )
+
+    def can_manage_event(
+        self,
+        user_id: str,
+        event_id: str,
+    ) -> bool:
+
+        return self._can_manage(
+            user_id,
+            Role.EVENT_RESPONSIBLE,
+            event_id,
+        )
 
     @staticmethod
     def _audit(
