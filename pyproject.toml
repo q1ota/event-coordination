@@ -13,4 +13,4 @@ dependencies = []
 include = ["event_coordination*"]
 
 [tool.setuptools.package-data]
-event_coordination = ["migrations/*.sql"]
+event_coordination = ["migrations/*.sql", "identity/*.sql"]
