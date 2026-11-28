@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import sqlite3
 import subprocess
@@ -22,7 +23,7 @@ class IntegrationTests(DomainCase):
         self.assertEqual(0, data["outbox_remaining"])
         self.assertEqual(0, data["external_messages_sent"])
         self.assertGreater(data["outbox_consumed_locally"], 0)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db:
             self.assertEqual(1, db.execute("SELECT COUNT(*) FROM events").fetchone()[0])
             self.assertEqual("archived", db.execute("SELECT status FROM events").fetchone()[0])
             self.assertEqual(1, db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0])
@@ -32,7 +33,7 @@ class IntegrationTests(DomainCase):
         )
         self.assertNotEqual(0, rerun.returncode)
         self.assertIn("must refer to a new file", rerun.stderr)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db:
             self.assertEqual(1, db.execute("SELECT COUNT(*) FROM events").fetchone()[0])
 
     def test_outbox_survives_restart_and_acknowledgment_is_repeatable(self):
